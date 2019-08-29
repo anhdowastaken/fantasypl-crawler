@@ -34,6 +34,8 @@ type LeagueAPIResult struct {
 		Name string `json:"name"`
 	} `json:"league`
 	Standings struct {
+		HasNext bool `json:"has_next"`
+		Page    int  `json:"page"`
 		Results []struct {
 			ID         int    `json:"id"`
 			Entry      int    `json:"entry"`
@@ -163,13 +165,33 @@ func main() {
 		err = json.Unmarshal(bytes, &leagueAPIResult)
 		if err != nil {
 			log.Critical.Printf("%#v", err)
-			continue
+			os.Exit(1)
 		}
 
 		var l League
 		l.ID = leagueAPIResult.League.ID
 		l.Name = leagueAPIResult.League.Name
 		l.Entries = make([]Entry, 0)
+
+		hasNext := leagueAPIResult.Standings.HasNext
+		page := leagueAPIResult.Standings.Page + 1
+		for hasNext == true {
+			urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/leagues-classic/%s/standings/?page_new_entries=1&page_standings=%d&phase=1", id, page)
+			log.Debug.Printf("Fetch %s", urlStr)
+			bytes, err := fetch(&client, urlStr)
+			if err != nil {
+				log.Critical.Printf("%#v", err)
+				os.Exit(1)
+			}
+			var _leagueAPIResult LeagueAPIResult
+			err = json.Unmarshal(bytes, &_leagueAPIResult)
+			if err != nil {
+				log.Critical.Printf("%#v", err)
+				os.Exit(1)
+			}
+			hasNext = _leagueAPIResult.Standings.HasNext
+			page = _leagueAPIResult.Standings.Page + 1
+		}
 
 		var wg sync.WaitGroup
 		var mutex = &sync.Mutex{}
