@@ -1,17 +1,21 @@
 package main
 
 import (
-	"flag"
-	"io"
-	"net/http"
-	"os"
-	"strings"
+	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
+	"flag"
 	"fmt"
-	"compress/gzip"
+	"io"
 	"io/ioutil"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
+
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/anhdowastaken/fantasypl-crawler/configuration"
 	"github.com/anhdowastaken/fantasypl-crawler/logger"
@@ -19,50 +23,50 @@ import (
 
 type GameAPIResult struct {
 	Events []struct {
-		ID int `json:"id"`
+		ID        int  `json:"id"`
 		IsCurrent bool `json:"is_current"`
 	} `json:"events"`
 }
 
 type LeagueAPIResult struct {
 	League struct {
-		ID int `json:"id"`
+		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"league`
 	Standings struct {
 		Results []struct {
-			ID int `json:"id"`
-			Entry int `json:"entry"`
-			EntryName string `json:"entry_name"`
+			ID         int    `json:"id"`
+			Entry      int    `json:"entry"`
+			EntryName  string `json:"entry_name"`
 			PlayerName string `json:"player_name"`
-			EventTotal int `json:"event_total"`
-			Total int `json:"total"`
-			Rank int `json:"rank"`
+			EventTotal int    `json:"event_total"`
+			Total      int    `json:"total"`
+			Rank       int    `json:"rank"`
 		} `json:"results`
 	} `json:"standings`
 }
 
 type EntryAPIResult struct {
 	Current []struct {
-		Event int `json:event`
-		Points int `json:points`
+		Event              int `json:event`
+		Points             int `json:points`
 		EventTransfersCost int `json:event_transfers_cost`
 	} `json:currentWeek`
 }
 
 type Entry struct {
-	ID int
-	EntryNum int
-	EntryName string
+	ID         int
+	EntryNum   int
+	EntryName  string
 	PlayerName string
-	Point map[int]int
-	Total int
-	Rank int
+	Point      map[int]int
+	Total      int
+	Rank       int
 }
 
 type League struct {
-	ID int
-	Name string
+	ID      int
+	Name    string
 	Entries []Entry
 }
 
@@ -93,10 +97,41 @@ func main() {
 
 	log.Info.Printf("Log level: %s\n", logger.LOGLEVEL[cm.AppCfg.LogLevel])
 
+	var urlStr string
+
+	// Login
+	urlStr = "https://users.premierleague.com/accounts/login/"
+	log.Debug.Printf("Login...")
+	options := cookiejar.Options{
+		PublicSuffixList: publicsuffix.List,
+	}
+	jar, err := cookiejar.New(&options)
+	if err != nil {
+		log.Critical.Printf("%#v", err)
+		os.Exit(1)
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := http.Client{
+		Jar:       jar,
+		Transport: tr,
+	}
+	_, err = client.PostForm(urlStr, url.Values{
+		"login":        {cm.FplCfg.Username},
+		"password":     {cm.FplCfg.Password},
+		"app":          {"plfpl-web"},
+		"redirect_uri": {"https://fantasy.premierleague.com/"},
+	})
+	if err != nil {
+		log.Critical.Printf("%#v", err)
+		os.Exit(1)
+	}
+
 	// Get currentWeek event
-	url := "https://fantasy.premierleague.com/api/bootstrap-static/"
-	log.Debug.Printf("Fetch %s", url)
-	bytes, err := fetch(url)
+	urlStr = "https://fantasy.premierleague.com/api/bootstrap-static/"
+	log.Debug.Printf("Fetch %s", urlStr)
+	bytes, err := fetch(&client, urlStr)
 	if err != nil {
 		log.Critical.Printf("%#v", err)
 		os.Exit(1)
@@ -117,9 +152,9 @@ func main() {
 	log.Info.Printf("Current week: %d", currentWeek)
 
 	for _, id := range cm.FplCfg.LeagueIDs {
-		url := fmt.Sprintf("https://fantasy.premierleague.com/api/leagues-classic/%s/standings/?page_new_entries=1&page_standings=1&phase=1", id)
-		log.Debug.Printf("Fetch %s", url)
-		bytes, err := fetch(url)
+		urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/leagues-classic/%s/standings/?page_new_entries=1&page_standings=1&phase=1", id)
+		log.Debug.Printf("Fetch %s", urlStr)
+		bytes, err := fetch(&client, urlStr)
 		if err != nil {
 			log.Critical.Printf("%#v", err)
 			os.Exit(1)
@@ -143,9 +178,9 @@ func main() {
 				wg.Add(1)
 				defer wg.Done()
 
-				url := fmt.Sprintf("https://fantasy.premierleague.com/api/entry/%d/history/", entry)
-				log.Debug.Printf("Fetch %s", url)
-				bytes, err := fetch(url)
+				urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/entry/%d/history/", entry)
+				log.Debug.Printf("Fetch %s", urlStr)
+				bytes, err := fetch(&client, urlStr)
 				if err != nil {
 					log.Critical.Printf("%#v", err)
 					os.Exit(1)
@@ -156,7 +191,7 @@ func main() {
 					log.Critical.Printf("%#v", err)
 					os.Exit(1)
 				}
-			
+
 				var e Entry
 				e.ID = id
 				e.EntryNum = entry
@@ -223,20 +258,15 @@ func main() {
 	os.Exit(0)
 }
 
-func fetch(url string) ([]byte, error) {
+func fetch(client *http.Client, urlStr string) ([]byte, error) {
 	var reader io.ReadCloser
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return make([]byte, 0), err
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36")
-
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
 
 	res, err := client.Do(req)
 	if err != nil {

@@ -10,12 +10,12 @@ import (
 
 // AppConfig structure contains main configuration of the app
 type AppConfig struct {
-	// App configuration
-	LogLevel           int    `mapstructure:"loglevel"`
+	LogLevel int `mapstructure:"loglevel"`
 }
 
 type FplConfig struct {
-	// Fantasy Premier League configuration
+	Username  string   `mapstructure:"username"`
+	Password  string   `mapstructure:"password"`
 	LeagueIDs []string `mapstructure:"leagueids"`
 }
 
