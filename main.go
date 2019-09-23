@@ -77,6 +77,7 @@ const defaultConfigFile = "fantasypl-crawler.conf"
 
 func main() {
 	log := logger.New()
+	reportStr := ""
 
 	confPath := flag.String("c", "", "Config file of an instance")
 	flag.Parse()
@@ -151,7 +152,6 @@ func main() {
 			break
 		}
 	}
-	log.Info.Printf("Current week: %d", currentWeek)
 
 	for _, id := range cm.FplCfg.LeagueIDs {
 		urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/leagues-classic/%s/standings/?page_new_entries=1&page_standings=1&phase=1", id)
@@ -214,6 +214,17 @@ func main() {
 					os.Exit(1)
 				}
 
+				ignored := false
+				for _, e := range cm.FplCfg.IgnoreEntries {
+					if entry == e {
+						ignored = true
+						break
+					}
+				}
+				if ignored {
+					return
+				}
+
 				var e Entry
 				e.ID = id
 				e.EntryNum = entry
@@ -235,10 +246,11 @@ func main() {
 		wg.Wait()
 		log.Debug.Printf("%#v", l)
 
-		log.Info.Printf("[%d] %s", l.ID, l.Name)
+		reportStr = fmt.Sprintf("%s\n[%d] %s", reportStr, l.ID, l.Name)
+		reportStr = fmt.Sprintf("%s\nCurrent week: %d", reportStr, currentWeek)
 		// Find highest point of each week
 		for w := 1; w <= currentWeek; w++ {
-			log.Info.Printf("- Week %d", w)
+			reportStr = fmt.Sprintf("%s\n- Week %d", reportStr, w)
 			highestPoint := 0
 			for _, e := range l.Entries {
 				p, ok := e.Point[w]
@@ -249,32 +261,62 @@ func main() {
 				}
 			}
 
-			log.Info.Printf("\tHighest point: %d", highestPoint)
+			reportStr = fmt.Sprintf("%s\n\tHighest point: %d", reportStr, highestPoint)
 
 			// Find entry whose point is equal to the highest point
 			for _, e := range l.Entries {
 				p, ok := e.Point[w]
 				if ok {
 					if p == highestPoint {
-						log.Info.Printf("\t+ [%s] %s", e.EntryName, e.PlayerName)
+						reportStr = fmt.Sprintf("%s\n\t+ [%s] %s", reportStr, e.EntryName, e.PlayerName)
 					}
 				}
 			}
 		}
 
-		log.Info.Printf("- Total")
+		for i := len(l.Entries); i > 0; i-- {
+			//The inner loop will first iterate through the full length
+			//the next iteration will be through n-1
+			// the next will be through n-2 and so on
+			for j := 1; j < i; j++ {
+				if l.Entries[j-1].Total < l.Entries[j].Total {
+					tmp := l.Entries[j]
+					l.Entries[j] = l.Entries[j-1]
+					l.Entries[j-1] = tmp
+				}
+			}
+		}
+
+		lastRank := -1
+		lastPoint := -1
+		for i := range l.Entries {
+			if lastRank == -1 {
+				l.Entries[i].Rank = i + 1
+			} else {
+				if l.Entries[i].Total == lastPoint {
+					l.Entries[i].Rank = lastRank
+				} else {
+					l.Entries[i].Rank = i + 1
+				}
+			}
+
+			lastRank = l.Entries[i].Rank
+			lastPoint = l.Entries[i].Total
+		}
+
+		reportStr = fmt.Sprintf("%s\n- Total", reportStr)
 		for _, e := range l.Entries {
 			if e.Rank == 1 {
-				log.Info.Printf("\tHighest point: %d", e.Total)
+				reportStr = fmt.Sprintf("%s\n\tHighest point: %d", reportStr, e.Total)
 				break
 			}
 		}
 
-		for _, e := range l.Entries {
-			if e.Rank == 1 {
-				log.Info.Printf("\t+ [%s] %s", e.EntryName, e.PlayerName)
-			}
+		for i := range l.Entries {
+			reportStr = fmt.Sprintf("%s\n\t+ Top %2d: %d: [%s] %s", reportStr, l.Entries[i].Rank, l.Entries[i].Total, l.Entries[i].EntryName, l.Entries[i].PlayerName)
 		}
+
+		log.Info.Printf("%s", reportStr)
 	}
 
 	os.Exit(0)

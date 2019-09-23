@@ -14,9 +14,10 @@ type AppConfig struct {
 }
 
 type FplConfig struct {
-	Username  string   `mapstructure:"username"`
-	Password  string   `mapstructure:"password"`
-	LeagueIDs []string `mapstructure:"leagueids"`
+	Username      string   `mapstructure:"username"`
+	Password      string   `mapstructure:"password"`
+	LeagueIDs     []string `mapstructure:"leagueids"`
+	IgnoreEntries []int    `mapstructure:"ignoreentries"`
 }
 
 // ConfigurationManager structure
