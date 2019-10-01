@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -77,7 +78,6 @@ const defaultConfigFile = "fantasypl-crawler.conf"
 
 func main() {
 	log := logger.New()
-	reportStr := ""
 
 	confPath := flag.String("c", "", "Config file of an instance")
 	flag.Parse()
@@ -154,6 +154,9 @@ func main() {
 	}
 
 	for _, id := range cm.FplCfg.LeagueIDs {
+		weeklyReportStr := ""
+		finalReportStr := ""
+
 		urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/leagues-classic/%s/standings/?page_new_entries=1&page_standings=1&phase=1", id)
 		log.Debug.Printf("Fetch %s", urlStr)
 		bytes, err := fetch(&client, urlStr)
@@ -196,8 +199,8 @@ func main() {
 		var wg sync.WaitGroup
 		var mutex = &sync.Mutex{}
 		for _, r := range leagueAPIResult.Standings.Results {
+			wg.Add(1)
 			go func(id int, entry int, entryName string, playerName string, total int, rank int) {
-				wg.Add(1)
 				defer wg.Done()
 
 				urlStr := fmt.Sprintf("https://fantasy.premierleague.com/api/entry/%d/history/", entry)
@@ -244,13 +247,20 @@ func main() {
 			}(r.ID, r.Entry, r.EntryName, r.PlayerName, r.Total, r.Rank)
 		}
 		wg.Wait()
-		log.Debug.Printf("%#v", l)
 
-		reportStr = fmt.Sprintf("%s\n[%d] %s", reportStr, l.ID, l.Name)
-		reportStr = fmt.Sprintf("%s\nCurrent week: %d", reportStr, currentWeek)
+		if len(l.Entries) == 0 {
+			continue
+		}
+
+		weeklyReportStr = fmt.Sprintf("\n[%d] %s", l.ID, l.Name)
+		finalReportStr = fmt.Sprintf("\n[%d] %s", l.ID, l.Name)
+
+		weeklyReportStr = fmt.Sprintf("%s\nCurrent week: %d", weeklyReportStr, currentWeek)
+		finalReportStr = fmt.Sprintf("%s\nCurrent week: %d", finalReportStr, currentWeek)
+
 		// Find highest point of each week
 		for w := 1; w <= currentWeek; w++ {
-			reportStr = fmt.Sprintf("%s\n- Week %d", reportStr, w)
+			weeklyReportStr = fmt.Sprintf("%s\n- Week %d", weeklyReportStr, w)
 			highestPoint := 0
 			for _, e := range l.Entries {
 				p, ok := e.Point[w]
@@ -261,14 +271,14 @@ func main() {
 				}
 			}
 
-			reportStr = fmt.Sprintf("%s\n\tHighest point: %d", reportStr, highestPoint)
+			weeklyReportStr = fmt.Sprintf("%s\n\tHighest point: %d", weeklyReportStr, highestPoint)
 
 			// Find entry whose point is equal to the highest point
 			for _, e := range l.Entries {
 				p, ok := e.Point[w]
 				if ok {
 					if p == highestPoint {
-						reportStr = fmt.Sprintf("%s\n\t+ [%s] %s", reportStr, e.EntryName, e.PlayerName)
+						weeklyReportStr = fmt.Sprintf("%s\n\t+ [%s] %s", weeklyReportStr, e.EntryName, e.PlayerName)
 					}
 				}
 			}
@@ -304,19 +314,43 @@ func main() {
 			lastPoint = l.Entries[i].Total
 		}
 
-		reportStr = fmt.Sprintf("%s\n- Total", reportStr)
-		for _, e := range l.Entries {
-			if e.Rank == 1 {
-				reportStr = fmt.Sprintf("%s\n\tHighest point: %d", reportStr, e.Total)
-				break
+		for i := range l.Entries {
+			finalReportStr = fmt.Sprintf("%s\n+ Top %2d: %d: [%s] %s", finalReportStr, l.Entries[i].Rank, l.Entries[i].Total, l.Entries[i].EntryName, l.Entries[i].PlayerName)
+		}
+
+		log.Info.Printf("%s", weeklyReportStr)
+		log.Info.Printf("%s", finalReportStr)
+
+		if cm.AppCfg.DirectoryToExport != "" {
+			err = os.MkdirAll(cm.AppCfg.DirectoryToExport, 0755)
+			if err != nil {
+				log.Critical.Printf("%+v", err)
+			} else {
+				var f *os.File
+
+				f, err = os.Create(filepath.Join(cm.AppCfg.DirectoryToExport, fmt.Sprintf("%s-weekly.txt", id)))
+				if err != nil {
+					log.Critical.Printf("%+v", err)
+				} else {
+					_, err = f.Write([]byte(weeklyReportStr))
+					if err != nil {
+						log.Critical.Printf("%+v", err)
+					}
+					f.Close()
+				}
+
+				f, err = os.Create(filepath.Join(cm.AppCfg.DirectoryToExport, fmt.Sprintf("%s-final.txt", id)))
+				if err != nil {
+					log.Critical.Printf("%+v", err)
+				} else {
+					_, err = f.Write([]byte(finalReportStr))
+					if err != nil {
+						log.Critical.Printf("%+v", err)
+					}
+					f.Close()
+				}
 			}
 		}
-
-		for i := range l.Entries {
-			reportStr = fmt.Sprintf("%s\n\t+ Top %2d: %d: [%s] %s", reportStr, l.Entries[i].Rank, l.Entries[i].Total, l.Entries[i].EntryName, l.Entries[i].PlayerName)
-		}
-
-		log.Info.Printf("%s", reportStr)
 	}
 
 	os.Exit(0)

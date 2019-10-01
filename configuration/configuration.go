@@ -10,7 +10,8 @@ import (
 
 // AppConfig structure contains main configuration of the app
 type AppConfig struct {
-	LogLevel int `mapstructure:"loglevel"`
+	LogLevel          int    `mapstructure:"loglevel"`
+	DirectoryToExport string `mapstructure:"directorytoexport"`
 }
 
 type FplConfig struct {
